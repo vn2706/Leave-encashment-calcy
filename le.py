@@ -17,7 +17,7 @@ STATE_LIMITS = {
 }
 
 # --- PAGE CONFIGURATION & PREMIUM CSS ---
-st.set_page_config(page_title="PhonePe FnF Pro", page_icon="📱", layout="wide")
+st.set_page_config(page_title="Leave Encashment calcy", page_icon="📱", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #F4F6F9; }
@@ -65,8 +65,8 @@ def standardize_id(df, possible_names, report_name):
     st.error(f"🚨 Could not find ID column in {report_name}"); st.stop()
 
 # --- MAIN UI ---
-st.markdown("<div class='main-header'>PhonePe FnF Pro</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>Automated Settlement Calculation & Consolidation</div>", unsafe_allow_html=True)
+st.markdown("<div class='main-header'>Leave Encashment calculator</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>Automated leave encashment calculation</div>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.button("🌴 2.1 Leave Encashment", on_click=nav_leave, use_container_width=True)
