@@ -204,5 +204,5 @@ if st.session_state.current_page == "Leave":
             st.download_button("📥 Download Final Encashment Report", data=csv, file_name="Final_Leave_Encashment.csv", mime="text/csv")
 
 elif st.session_state.current_page == "Home":
-    st.write("### 👋 Welcome to PhonePe Settlement Portal")
+    st.write("### 👋 Welcome to Leave Encashment Calculator")
     st.button("Launch Leave Encashment", on_click=nav_leave)
