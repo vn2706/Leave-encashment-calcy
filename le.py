@@ -142,7 +142,7 @@ if st.session_state.current_page == "Leave":
             if st.button("Approve Pivot Table ✅"):
                 st.session_state.pivot_approved = True
 
-        # --- FINAL REPORT GENERATION & MERGE (STEP 2.3) ---
+        # --- FINAL REPORT GENERATION (STEP 2.3) ---
         if st.session_state.pivot_approved:
             st.markdown("---")
             st.markdown("### 📋 Step 2.3: Final Leave Encashment Report")
@@ -186,36 +186,49 @@ if st.session_state.current_page == "Leave":
             csv = st.session_state.final_report_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Final Encashment Report", data=csv, file_name="Final_Leave_Encashment.csv", mime="text/csv")
 
-            # --- CONSOLIDATED MERGE SECTION ---
+            # --- CONSOLIDATED MERGE SECTION (STEP 2.4) ---
             st.markdown("---")
             st.markdown("### 🔗 Step 2.4: Merge with Consolidated Report")
             l_cons = st.file_uploader("4. Upload Consolidated Report", type=["csv", "xlsx"])
             
             if l_cons:
                 df_cons_raw = load_file(l_cons)
-                df_cons = standardize_id(df_cons_raw, ["employeeid", "userid", "empid", "employee id"], "Consolidated Report")
+                
+                # CLEANUP: Remove any 'Unnamed' columns from the uploaded Consolidated Report
+                df_cons_raw = df_cons_raw.loc[:, ~df_cons_raw.columns.str.contains('^Unnamed')]
+                
+                # Standardize ID in the Consolidated Report
+                df_cons = standardize_id(df_cons_raw, ["employeeid", "userid", "empid", "employee id", "emp id"], "Consolidated Report")
                 
                 if st.button("Merge Final AL into Consolidated Report"):
-                    # Match Final AL values using the standardized Base_ID
+                    # 1. Prepare only the essential 'Final AL' column and the ID for mapping
                     calc_subset = st.session_state.final_report_df[['Employee ID', 'Final AL']]
                     
+                    # 2. Perform the merge
                     merged_df = pd.merge(
                         df_cons, 
                         calc_subset, 
                         left_on='Base_ID', 
                         right_on='Employee ID', 
                         how='left'
-                    ).drop(columns=['Base_ID', 'Employee ID_y'], errors='ignore')
+                    )
                     
-                    # Clean up duplicate names if they occur
-                    if 'Employee ID_x' in merged_df.columns:
-                        merged_df.rename(columns={'Employee ID_x': 'Employee ID'}, inplace=True)
-
-                    st.success("✅ Merge complete!")
+                    # 3. FINAL CLEANUP: 
+                    # Remove the mapping columns ('Base_ID' and 'Employee ID' from the calc sheet) 
+                    # so they don't appear in the final file right before 'Final AL'.
+                    cols_to_drop = ['Base_ID', 'Employee ID']
+                    merged_df = merged_df.drop(columns=[c for c in cols_to_drop if c in merged_df.columns])
+                    
+                    st.success("✅ Merge complete! Cleaner file generated.")
                     st.dataframe(merged_df.head(), use_container_width=True)
                     
                     final_csv = merged_df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download Merged Consolidated Report", data=final_csv, file_name="Merged_Consolidated_Report.csv", mime="text/csv")
+                    st.download_button(
+                        "📥 Download Merged Consolidated Report", 
+                        data=final_csv, 
+                        file_name="Merged_Consolidated_Report.csv", 
+                        mime="text/csv"
+                    )
 
 elif st.session_state.current_page == "Home":
     st.write("### 👋 Welcome to Leave Encashment Calculator")
