@@ -69,6 +69,7 @@ st.markdown("<div class='main-header'>Leave Encashment calculator</div>", unsafe
 st.markdown("<div class='sub-header'>Automated leave encashment calculation</div>", unsafe_allow_html=True)
 
 with st.sidebar:
+    st.button("🏠 Home", on_click=nav_home, use_container_width=True)
     st.button("🌴 2.1 Leave Encashment", on_click=nav_leave, use_container_width=True)
 
 if st.session_state.current_page == "Leave":
@@ -141,15 +142,12 @@ if st.session_state.current_page == "Leave":
             if st.button("Approve Pivot Table ✅"):
                 st.session_state.pivot_approved = True
 
-        # --- FINAL REPORT GENERATION (STEP 2.3) ---
+        # --- FINAL REPORT GENERATION & MERGE (STEP 2.3) ---
         if st.session_state.pivot_approved:
             st.markdown("---")
             st.markdown("### 📋 Step 2.3: Final Leave Encashment Report")
             
-            # 1. Base the report on NCP Input IDs
             report = pd.DataFrame({'Employee ID': df_ncp['Base_ID'].unique()})
-            
-            # 2. Match IDs with HC Report & Extract State after '-'
             df_hc = standardize_id(df_hc_raw, ["user/employee id", "userid", "employee id"], "HC Report")
             
             def extract_state_after_dash(val):
@@ -159,39 +157,25 @@ if st.session_state.current_page == "Leave":
             
             df_hc['Clean_State'] = df_hc['Statutory State'].apply(extract_state_after_dash)
             
-            # 3. Merge Data
-            # Merge State from HC
             report = pd.merge(report, df_hc[['Base_ID', 'Clean_State']], left_on='Employee ID', right_on='Base_ID', how='left')
-            # Merge Balances from Pivot
             report = pd.merge(report, st.session_state.pivot_df, on='Employee ID', how='left')
-            # Merge Lapse values
             report = pd.merge(report, st.session_state.lapse_calc_df[['Base_ID', 'Total Lapse']], on='Base_ID', how='left')
             
-            # 4. Calculation Logic
-            # CL balance: Only negative values, positive becomes 0
             if 'CL balance' in report.columns:
                 report['CL balance'] = report['CL balance'].apply(lambda x: x if x < 0 else 0)
             else:
                 report['CL balance'] = 0
             
-            # AL to be considered = AL balance - CL balance (Note: CL is now 0 or negative)
             report['AL balance'] = report['AL balance'].fillna(0)
             report['AL to be considered for NCP adjustment'] = report['AL balance'] + report['CL balance']
             
-            # Rename Lapse
             report.rename(columns={'Total Lapse': 'Leaves to be lapsed', 'Clean_State': 'Statutory State'}, inplace=True)
             report['Leaves to be lapsed'] = report['Leaves to be lapsed'].fillna(0)
-            
-            # AL post lapse
             report['AL post lapse'] = report['AL to be considered for NCP adjustment'] - report['Leaves to be lapsed']
-            
-            # Max LE days (state) from table mapping
             report['Max LE days(state)'] = report['Statutory State'].map(STATE_LIMITS).fillna(0)
             
-            # Final AL: Minimum of AL post lapse and Max LE days
             report['Final AL'] = report.apply(lambda x: min(x['AL post lapse'], x['Max LE days(state)']) if x['AL post lapse'] > 0 else 0, axis=1)
             
-            # Display Final Table
             final_cols = ['Employee ID', 'Statutory State', 'AL balance', 'CL balance', 
                           'AL to be considered for NCP adjustment', 'Leaves to be lapsed', 
                           'AL post lapse', 'Max LE days(state)', 'Final AL']
@@ -199,9 +183,39 @@ if st.session_state.current_page == "Leave":
             st.session_state.final_report_df = report[final_cols]
             st.dataframe(st.session_state.final_report_df, use_container_width=True)
             
-            # Download
             csv = st.session_state.final_report_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Final Encashment Report", data=csv, file_name="Final_Leave_Encashment.csv", mime="text/csv")
+
+            # --- CONSOLIDATED MERGE SECTION ---
+            st.markdown("---")
+            st.markdown("### 🔗 Step 2.4: Merge with Consolidated Report")
+            l_cons = st.file_uploader("4. Upload Consolidated Report", type=["csv", "xlsx"])
+            
+            if l_cons:
+                df_cons_raw = load_file(l_cons)
+                df_cons = standardize_id(df_cons_raw, ["employeeid", "userid", "empid", "employee id"], "Consolidated Report")
+                
+                if st.button("Merge Final AL into Consolidated Report"):
+                    # Match Final AL values using the standardized Base_ID
+                    calc_subset = st.session_state.final_report_df[['Employee ID', 'Final AL']]
+                    
+                    merged_df = pd.merge(
+                        df_cons, 
+                        calc_subset, 
+                        left_on='Base_ID', 
+                        right_on='Employee ID', 
+                        how='left'
+                    ).drop(columns=['Base_ID', 'Employee ID_y'], errors='ignore')
+                    
+                    # Clean up duplicate names if they occur
+                    if 'Employee ID_x' in merged_df.columns:
+                        merged_df.rename(columns={'Employee ID_x': 'Employee ID'}, inplace=True)
+
+                    st.success("✅ Merge complete!")
+                    st.dataframe(merged_df.head(), use_container_width=True)
+                    
+                    final_csv = merged_df.to_csv(index=False).encode('utf-8')
+                    st.download_button("📥 Download Merged Consolidated Report", data=final_csv, file_name="Merged_Consolidated_Report.csv", mime="text/csv")
 
 elif st.session_state.current_page == "Home":
     st.write("### 👋 Welcome to Leave Encashment Calculator")
