@@ -17,7 +17,7 @@ STATE_LIMITS = {
 }
 
 # --- PAGE CONFIGURATION & PREMIUM CSS ---
-st.set_page_config(page_title="Leave Encashment calcy", page_icon="📱", layout="wide")
+st.set_page_config(page_title="Leave Encashment calcy", page_icon="🌴", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #F4F6F9; }
@@ -48,6 +48,45 @@ for key, value in states_to_init.items():
 
 def nav_home(): st.session_state.current_page = "Home"
 def nav_leave(): st.session_state.current_page = "Leave"
+
+# --- STYLING HELPER FOR EXCEL (HANDLES NaN ERRORS) ---
+def convert_df_to_styled_excel(df):
+    output = io.BytesIO()
+    # Adding 'nan_inf_to_errors' prevents the crash if data is missing
+    with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}}) as writer:
+        df.to_excel(writer, index=False, sheet_name='Report')
+        workbook = writer.book
+        worksheet = writer.sheets['Report']
+        
+        # Header: Purple background, white bold text
+        header_format = workbook.add_format({
+            'bold': True, 'text_wrap': True, 'valign': 'vcenter',
+            'fg_color': '#5E239D', 'font_color': 'white', 'border': 1
+        })
+        
+        # Body: Standard borders
+        body_format = workbook.add_format({'border': 1})
+        
+        # Apply header formatting
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            
+        # Apply body formatting and safety check for NaN values
+        for row_num in range(1, len(df) + 1):
+            for col_num in range(len(df.columns)):
+                val = df.iloc[row_num-1, col_num]
+                if pd.isna(val):
+                    worksheet.write_string(row_num, col_num, "", body_format)
+                else:
+                    worksheet.write(row_num, col_num, val, body_format)
+                
+        # Auto-adjust column width
+        for i, col in enumerate(df.columns):
+            max_len = df[col].astype(str).str.len().max()
+            column_len = max(float(max_len or 0), len(col)) + 2
+            worksheet.set_column(i, i, column_len)
+            
+    return output.getvalue()
 
 # --- HELPERS ---
 def load_file(uploaded_file):
@@ -183,8 +222,9 @@ if st.session_state.current_page == "Leave":
             st.session_state.final_report_df = report[final_cols]
             st.dataframe(st.session_state.final_report_df, use_container_width=True)
             
-            csv = st.session_state.final_report_df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Final Encashment Report", data=csv, file_name="Final_Leave_Encashment.csv", mime="text/csv")
+            # STYLED DOWNLOAD
+            final_xlsx = convert_df_to_styled_excel(st.session_state.final_report_df)
+            st.download_button("📥 Download Final Encashment Report", data=final_xlsx, file_name="Final_Leave_Encashment.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             # --- CONSOLIDATED MERGE SECTION (STEP 2.4) ---
             st.markdown("---")
@@ -193,41 +233,26 @@ if st.session_state.current_page == "Leave":
             
             if l_cons:
                 df_cons_raw = load_file(l_cons)
-                
-                # CLEANUP: Remove any 'Unnamed' columns from the uploaded Consolidated Report
                 df_cons_raw = df_cons_raw.loc[:, ~df_cons_raw.columns.str.contains('^Unnamed')]
-                
-                # Standardize ID in the Consolidated Report
                 df_cons = standardize_id(df_cons_raw, ["employeeid", "userid", "empid", "employee id", "emp id"], "Consolidated Report")
                 
                 if st.button("Merge Final AL into Consolidated Report"):
-                    # 1. Prepare only the essential 'Final AL' column and the ID for mapping
                     calc_subset = st.session_state.final_report_df[['Employee ID', 'Final AL']]
+                    merged_df = pd.merge(df_cons, calc_subset, left_on='Base_ID', right_on='Employee ID', how='left')
                     
-                    # 2. Perform the merge
-                    merged_df = pd.merge(
-                        df_cons, 
-                        calc_subset, 
-                        left_on='Base_ID', 
-                        right_on='Employee ID', 
-                        how='left'
-                    )
-                    
-                    # 3. FINAL CLEANUP: 
-                    # Remove the mapping columns ('Base_ID' and 'Employee ID' from the calc sheet) 
-                    # so they don't appear in the final file right before 'Final AL'.
                     cols_to_drop = ['Base_ID', 'Employee ID']
                     merged_df = merged_df.drop(columns=[c for c in cols_to_drop if c in merged_df.columns])
                     
                     st.success("✅ Merge complete! Cleaner file generated.")
                     st.dataframe(merged_df.head(), use_container_width=True)
                     
-                    final_csv = merged_df.to_csv(index=False).encode('utf-8')
+                    # STYLED DOWNLOAD
+                    merged_xlsx = convert_df_to_styled_excel(merged_df)
                     st.download_button(
                         "📥 Download Merged Consolidated Report", 
-                        data=final_csv, 
-                        file_name="Merged_Consolidated_Report.csv", 
-                        mime="text/csv"
+                        data=merged_xlsx, 
+                        file_name="Merged_Consolidated_Report.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
 elif st.session_state.current_page == "Home":
