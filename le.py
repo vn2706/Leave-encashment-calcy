@@ -39,24 +39,54 @@ for key, value in states_to_init.items():
 def nav_home(): st.session_state.current_page = "Home"
 def nav_leave(): st.session_state.current_page = "Leave"
 
-def convert_df_to_styled_excel(df):
+def convert_df_to_styled_excel(report_df, lapse_df, master_df=None, master_sheet_name="Master Report"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}}) as writer:
-        df.to_excel(writer, index=False, sheet_name='Report')
-        workbook, worksheet = writer.book, writer.sheets['Report']
+        workbook = writer.book
         header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'vcenter', 'fg_color': '#5E239D', 'font_color': 'white', 'border': 1})
         body_format = workbook.add_format({'border': 1})
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-        for row_num in range(1, len(df) + 1):
-            for col_num in range(len(df.columns)):
-                val = df.iloc[row_num-1, col_num]
-                worksheet.write(row_num, col_num, "" if pd.isna(val) else val, body_format)
+
+        # --- TAB 1: MASTER CONSOLIDATED REPORT ---
+        if master_df is not None:
+            master_df.to_excel(writer, index=False, sheet_name=master_sheet_name)
+            worksheet_m = writer.sheets[master_sheet_name]
+            for col_num, value in enumerate(master_df.columns.values):
+                worksheet_m.write(0, col_num, value, header_format)
+            for row_num in range(1, len(master_df) + 1):
+                for col_num in range(len(master_df.columns)):
+                    val = master_df.iloc[row_num-1, col_num]
+                    worksheet_m.write(row_num, col_num, "" if pd.isna(val) else val, body_format)
+
+        # --- TAB 2: REPORT ---
+        if report_df is not None:
+            report_df.to_excel(writer, index=False, sheet_name='Report')
+            worksheet1 = writer.sheets['Report']
+            for col_num, value in enumerate(report_df.columns.values):
+                worksheet1.write(0, col_num, value, header_format)
+            for row_num in range(1, len(report_df) + 1):
+                for col_num in range(len(report_df.columns)):
+                    val = report_df.iloc[row_num-1, col_num]
+                    worksheet1.write(row_num, col_num, "" if pd.isna(val) else val, body_format)
+                    
+        # --- TAB 3: LAPSE CALCULATION ---
+        if lapse_df is not None:
+            lapse_df.to_excel(writer, index=False, sheet_name='Lapse calculation')
+            worksheet2 = writer.sheets['Lapse calculation']
+            for col_num, value in enumerate(lapse_df.columns.values):
+                worksheet2.write(0, col_num, value, header_format)
+            for row_num in range(1, len(lapse_df) + 1):
+                for col_num in range(len(lapse_df.columns)):
+                    val = lapse_df.iloc[row_num-1, col_num]
+                    worksheet2.write(row_num, col_num, "" if pd.isna(val) else val, body_format)
+                    
     return output.getvalue()
 
 def load_file(uploaded_file):
     uploaded_file.seek(0)
-    return pd.read_csv(uploaded_file, encoding='utf-8-sig', on_bad_lines='skip') if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+    if uploaded_file.name.endswith('.csv'):
+        return pd.read_csv(uploaded_file, encoding='utf-8-sig', on_bad_lines='skip')
+    else:
+        return pd.read_excel(uploaded_file, engine='openpyxl')
 
 def standardize_id(df, possible_names, report_name):
     def scrub(val): return re.sub(r'[^a-zA-Z0-9]', '', str(val)).lower()
@@ -131,7 +161,6 @@ if st.session_state.current_page == "Leave":
             report = pd.merge(report, st.session_state.lapse_calc_df[['Base_ID', 'Total Lapse']], on='Base_ID', how='left')
             
             # --- CALCULATIONS ---
-            # CL Balance: If positive, force to 0. If negative, keep it.
             report['CL balance'] = np.minimum(report['CL balance'].fillna(0), 0).round(3)
             report['AL balance'] = report['AL balance'].fillna(0).round(3)
             report['Leaves to be lapsed'] = report['Total Lapse'].fillna(0).round(3)
@@ -140,16 +169,17 @@ if st.session_state.current_page == "Leave":
             report['AL post lapse'] = (report['AL to be considered for NCP adjustment'] - report['Leaves to be lapsed']).round(3)
             report['Max LE days(state)'] = report['Clean_State'].map(STATE_LIMITS).fillna(0)
             
-            # Final AL: Pick negative if post lapse is negative.
-            report['Final AL'] = np.minimum(report['AL post lapse'], report['Max LE days(state)']).round(3)
+            # Final LE Metric
+            report['Final LE'] = np.minimum(report['AL post lapse'], report['Max LE days(state)']).round(3)
             
             report.rename(columns={'Clean_State': 'Statutory State'}, inplace=True)
-            final_cols = ['Employee ID', 'Statutory State', 'AL balance', 'CL balance', 'AL to be considered for NCP adjustment', 'Leaves to be lapsed', 'AL post lapse', 'Max LE days(state)', 'Final AL']
+            final_cols = ['Employee ID', 'Statutory State', 'AL balance', 'CL balance', 'AL to be considered for NCP adjustment', 'Leaves to be lapsed', 'AL post lapse', 'Max LE days(state)', 'Final LE']
             
             st.session_state.final_report_df = report[final_cols].copy()
             st.dataframe(st.session_state.final_report_df, use_container_width=True)
             
-            st.download_button("📥 Download Final Encashment Report", data=convert_df_to_styled_excel(st.session_state.final_report_df), file_name="Final_Leave_Encashment.xlsx")
+            excel_data = convert_df_to_styled_excel(st.session_state.final_report_df, st.session_state.lapse_calc_df)
+            st.download_button("📥 Download Final Encashment Report", data=excel_data, file_name="Final_Leave_Encashment.xlsx")
 
             # --- STEP 2.4: MERGE WITH CONSOLIDATED REPORT ---
             st.markdown("---")
@@ -158,30 +188,48 @@ if st.session_state.current_page == "Leave":
             
             if l_cons:
                 df_cons_raw = load_file(l_cons)
-                # Clean unnamed columns
                 df_cons_raw = df_cons_raw.loc[:, ~df_cons_raw.columns.str.contains('^Unnamed')]
                 df_cons = standardize_id(df_cons_raw, ["employeeid", "userid", "empid", "employee id", "emp id"], "Consolidated Report")
                 
-                if st.button("Merge Final AL into Consolidated Report"):
-                    # Get only the two columns we need to merge
-                    calc_subset = st.session_state.final_report_df[['Employee ID', 'Final AL']]
+                # Dynamic column check for Leave Encashment
+                target_col = next((c for c in df_cons.columns if 'leave encashment' in str(c).lower()), None)
+                
+                if target_col is None:
+                    st.warning("⚠️ 'Leave Encashment' column not found in input sheet. It will be generated automatically.")
+                    target_col = 'Leave Encashment'
+                
+                if st.button("Perform Lookup & Generate Multi-Tab Master Sheet"):
+                    calc_subset = st.session_state.final_report_df[['Employee ID', 'Final LE']]
                     
-                    # Left merge on Employee ID
+                    # Left merge to map values
                     merged_df = pd.merge(df_cons, calc_subset, left_on='Base_ID', right_on='Employee ID', how='left')
                     
-                    # Cleanup temporary merge columns
-                    cols_to_drop = ['Base_ID', 'Employee ID']
+                    # Explicit lookup mapping into the targeted column
+                    if target_col in df_cons.columns:
+                        merged_df[target_col] = merged_df['Final LE'].fillna(merged_df[target_col])
+                    else:
+                        merged_df[target_col] = merged_df['Final LE']
+                    
+                    # EXPLICIT CLEANUP: Remove standardizing metrics AND the matched 'Employee ID' column 
+                    # so that it never trail-renders after the original data columns (like Remarks)
+                    cols_to_drop = ['Base_ID', 'Employee ID', 'Final LE']
                     merged_df = merged_df.drop(columns=[c for c in cols_to_drop if c in merged_df.columns])
                     
-                    st.success("✅ Merge complete!")
+                    st.success("✅ Master VLOOKUP completed successfully!")
                     st.dataframe(merged_df.head(), use_container_width=True)
                     
-                    # Download merged file
-                    merged_xlsx = convert_df_to_styled_excel(merged_df)
+                    # Produces the final multi-tab workbook
+                    merged_xlsx = convert_df_to_styled_excel(
+                        report_df=st.session_state.final_report_df, 
+                        lapse_df=st.session_state.lapse_calc_df, 
+                        master_df=merged_df,
+                        master_sheet_name="Consolidated Master"
+                    )
+                    
                     st.download_button(
-                        "📥 Download Merged Consolidated Report", 
+                        "📥 Download Merged Consolidated Master Workbook", 
                         data=merged_xlsx, 
-                        file_name="Merged_Consolidated_Report.xlsx", 
+                        file_name="Merged_Master_Consolidated_Report.xlsx", 
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
